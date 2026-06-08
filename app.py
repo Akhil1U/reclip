@@ -18,16 +18,18 @@ os.makedirs(COOKIES_DIR, exist_ok=True)
 jobs = {}
 info_cache = {}
 INFO_CACHE_TTL = 300
+INFO_TO_DOWNLOAD_GAP_SECONDS = 8
 PLATFORM_LOCKS = {
     "youtube": threading.Semaphore(1),
     "instagram": threading.Semaphore(1),
 }
 PLATFORM_MIN_INTERVALS = {
-    "youtube": 5,
+    "youtube": 10,
     "instagram": 5,
 }
 platform_last_request = {}
 platform_last_request_lock = threading.Lock()
+YTDLP_RETRYABLE_ERRORS = ("HTTP Error 429", "Too Many Requests")
 
 
 def get_platform(url):
@@ -103,6 +105,44 @@ def wait_for_platform_cooldown(platform):
         platform_last_request[platform] = now
 
 
+def run_yt_dlp_with_retries(cmd, timeout, platform):
+    max_attempts = 3 if platform == "youtube" else 1
+    last_result = None
+
+    for attempt in range(max_attempts):
+        if attempt > 0:
+            backoff_seconds = 10 * (2 ** (attempt - 1))
+            time.sleep(backoff_seconds)
+            wait_for_platform_cooldown(platform)
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        last_result = result
+        stderr = (result.stderr or "").strip()
+        if result.returncode == 0:
+            return result
+        if platform != "youtube":
+            return result
+        if not any(error_text in stderr for error_text in YTDLP_RETRYABLE_ERRORS):
+            return result
+
+    return last_result
+
+
+def wait_after_recent_info_fetch(url):
+    cached = info_cache.get(url)
+    if not cached:
+        return
+
+    fetched_at = cached.get("timestamp")
+    if fetched_at is None:
+        return
+
+    elapsed = time.time() - fetched_at
+    wait_time = INFO_TO_DOWNLOAD_GAP_SECONDS - elapsed
+    if wait_time > 0:
+        time.sleep(wait_time)
+
+
 def run_download(job_id, url, format_choice, format_id):
     job = jobs[job_id]
     out_template = os.path.join(DOWNLOAD_DIR, f"{job_id}.%(ext)s")
@@ -123,9 +163,10 @@ def run_download(job_id, url, format_choice, format_id):
     try:
         if platform_lock:
             platform_lock.acquire()
+        wait_after_recent_info_fetch(url)
         wait_for_platform_cooldown(platform)
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = run_yt_dlp_with_retries(cmd, timeout=300, platform=platform)
         if result.returncode != 0:
             job["status"] = "error"
             job["error"] = result.stderr.strip() or "yt-dlp failed"
@@ -193,7 +234,7 @@ def get_info():
     cmd = build_yt_dlp_cmd(url, "-j", url)
     try:
         wait_for_platform_cooldown(platform)
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        result = run_yt_dlp_with_retries(cmd, timeout=60, platform=platform)
         if result.returncode != 0:
             return jsonify({"error": result.stderr.strip() or "yt-dlp failed"}), 400
 
