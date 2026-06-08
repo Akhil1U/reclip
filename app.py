@@ -85,13 +85,13 @@ def build_yt_dlp_cmd(url, *extra_args):
 
     platform = get_platform(url)
     if platform == "youtube":
-        # Use Android + mweb clients to bypass PO token requirement and
-        # datacenter IP blocking that affects cloud hosts like Render.
-        # The Android client uses a different API endpoint that is less
-        # aggressively bot-filtered than the web client.
+        # Use mweb + tv_embedded + web_embedded clients — these all support
+        # cookie-based auth (android does NOT support cookies and gets skipped).
+        # tv_embedded and mweb bypass PO token requirements on datacenter IPs
+        # like Render/AWS where the standard web client is blocked.
         cmd += [
             "--extractor-args",
-            "youtube:player_client=android,mweb;player_skip=webpage,configs",
+            "youtube:player_client=mweb,tv_embedded,web_embedded;player_skip=webpage,configs",
         ]
 
     cookies_file = get_cookies_file(url)

@@ -311,6 +311,10 @@
       color: var(--error);
       margin-top: 2px;
       line-height: 1.4;
+      max-height: 80px;
+      overflow-y: auto;
+      word-break: break-word;
+      white-space: pre-wrap;
     }
     .card-error-url {
       font-size: 0.65rem;
@@ -456,7 +460,7 @@
       if (err.includes('geo')) return 'Video not available in your region';
       if (err.includes('timed out') || err.includes('Timed out')) return 'Request timed out — try again';
       if (err.includes('network') || err.includes('Network')) return 'Network error — check your connection';
-      return err.length > 80 ? err.slice(0, 80) + '...' : err;
+      return err;
     }
 
     document.getElementById('urls').addEventListener('keydown', e => {
