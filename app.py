@@ -83,6 +83,12 @@ def build_yt_dlp_cmd(url, *extra_args):
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
     ]
 
+    # Optional residential proxy — set YTDLP_PROXY env var on Render to route
+    # YouTube requests through a non-datacenter IP (e.g. socks5://user:pass@host:port)
+    proxy = os.environ.get("YTDLP_PROXY")
+    if proxy:
+        cmd += ["--proxy", proxy]
+
     platform = get_platform(url)
     cookies_file = get_cookies_file(url)
 
@@ -90,15 +96,13 @@ def build_yt_dlp_cmd(url, *extra_args):
         if cookies_file:
             # With cookies: use the standard web client with full webpage access.
             # yt-dlp needs to load the page to extract the PO (Proof of Origin)
-            # token from the authenticated session — skipping it causes the
-            # "Sign in to confirm you're not a bot" error on cloud/datacenter IPs.
+            # token from the authenticated session.
             cmd += [
                 "--extractor-args",
                 "youtube:player_client=web,mweb,web_embedded",
             ]
         else:
-            # Without cookies: use mobile clients that don’t require PO tokens
-            # and skip the webpage to avoid being rate-limited.
+            # Without cookies: use mobile clients that don't require PO tokens.
             cmd += [
                 "--extractor-args",
                 "youtube:player_client=mweb,web_embedded;player_skip=webpage,configs",

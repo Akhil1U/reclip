@@ -460,6 +460,12 @@
       if (err.includes('geo')) return 'Video not available in your region';
       if (err.includes('timed out') || err.includes('Timed out')) return 'Request timed out — try again';
       if (err.includes('network') || err.includes('Network')) return 'Network error — check your connection';
+      if (err.includes('cookies are no longer valid') || err.includes('rotated'))
+        return '⚠️ YouTube cookies have expired — please re-export cookies from your browser and update the cookies/youtube.txt file.';
+      if (err.includes('429') || err.includes('Too Many Requests'))
+        return '⚠️ YouTube is rate-limiting this server\'s IP. Try again in a few minutes.';
+      if (err.includes('Sign in to confirm') || err.includes('not a bot'))
+        return '⚠️ YouTube is blocking this server\'s IP. Your cookies may be expired — re-export fresh cookies from your browser.';
       return err;
     }
 
