@@ -166,7 +166,9 @@ def download_file(job_id):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8899))
-    host = os.environ.get("HOST", "127.0.0.1")
+    # Bind to all interfaces by default so container platforms like Render
+    # can route external traffic into the app.
+    host = os.environ.get("HOST", "0.0.0.0")
     app.run(host=host, port=port)
 
 # if __name__ == "__main__":
