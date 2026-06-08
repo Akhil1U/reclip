@@ -4,6 +4,7 @@ import glob
 import json
 import subprocess
 import threading
+import time
 from urllib.parse import urlparse
 from flask import Flask, request, jsonify, send_file, render_template
 
@@ -15,6 +16,32 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 os.makedirs(COOKIES_DIR, exist_ok=True)
 
 jobs = {}
+info_cache = {}
+INFO_CACHE_TTL = 300
+PLATFORM_LOCKS = {
+    "youtube": threading.Semaphore(1),
+    "instagram": threading.Semaphore(1),
+}
+PLATFORM_MIN_INTERVALS = {
+    "youtube": 5,
+    "instagram": 5,
+}
+platform_last_request = {}
+platform_last_request_lock = threading.Lock()
+
+
+def get_platform(url):
+    hostname = (urlparse(url).hostname or "").lower()
+    if hostname.startswith("www."):
+        hostname = hostname[4:]
+
+    if "youtube.com" in hostname or "youtu.be" in hostname:
+        return "youtube"
+    if "instagram.com" in hostname:
+        return "instagram"
+    if "facebook.com" in hostname or "fb.watch" in hostname:
+        return "facebook"
+    return "generic"
 
 
 def get_cookies_file(url):
@@ -22,16 +49,14 @@ def get_cookies_file(url):
     if env_cookies_file and os.path.exists(env_cookies_file):
         return env_cookies_file
 
-    hostname = (urlparse(url).hostname or "").lower()
-    if hostname.startswith("www."):
-        hostname = hostname[4:]
+    platform = get_platform(url)
 
     platform_candidates = []
-    if "youtube.com" in hostname or "youtu.be" in hostname:
+    if platform == "youtube":
         platform_candidates = ["youtube.txt", "www.youtube.com_cookies.txt", "cookies.txt"]
-    elif "instagram.com" in hostname:
+    elif platform == "instagram":
         platform_candidates = ["instagram.txt", "www.instagram.com_cookies.txt", "cookies.txt"]
-    elif "facebook.com" in hostname or "fb.watch" in hostname:
+    elif platform == "facebook":
         platform_candidates = ["facebook.txt", "www.facebook.com_cookies.txt", "cookies.txt"]
     else:
         platform_candidates = ["cookies.txt"]
@@ -49,7 +74,12 @@ def get_cookies_file(url):
 
 
 def build_yt_dlp_cmd(url, *extra_args):
-    cmd = ["yt-dlp", "--no-playlist", "--extractor-args", "youtube:player_client=ios"]
+    cmd = [
+        "yt-dlp",
+        "--no-playlist",
+        "--user-agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+    ]
     cookies_file = get_cookies_file(url)
     if cookies_file:
         cmd += ["--cookies", cookies_file]
@@ -57,9 +87,27 @@ def build_yt_dlp_cmd(url, *extra_args):
     return cmd
 
 
+def wait_for_platform_cooldown(platform):
+    min_interval = PLATFORM_MIN_INTERVALS.get(platform, 0)
+    if min_interval <= 0:
+        return
+
+    with platform_last_request_lock:
+        last_request = platform_last_request.get(platform)
+        now = time.time()
+        if last_request is not None:
+            wait_time = min_interval - (now - last_request)
+            if wait_time > 0:
+                time.sleep(wait_time)
+                now = time.time()
+        platform_last_request[platform] = now
+
+
 def run_download(job_id, url, format_choice, format_id):
     job = jobs[job_id]
     out_template = os.path.join(DOWNLOAD_DIR, f"{job_id}.%(ext)s")
+    platform = get_platform(url)
+    platform_lock = PLATFORM_LOCKS.get(platform)
 
     cmd = build_yt_dlp_cmd(url, "-o", out_template)
 
@@ -73,6 +121,10 @@ def run_download(job_id, url, format_choice, format_id):
     cmd.append(url)
 
     try:
+        if platform_lock:
+            platform_lock.acquire()
+        wait_for_platform_cooldown(platform)
+
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if result.returncode != 0:
             job["status"] = "error"
@@ -115,6 +167,9 @@ def run_download(job_id, url, format_choice, format_id):
     except Exception as e:
         job["status"] = "error"
         job["error"] = str(e)
+    finally:
+        if platform_lock:
+            platform_lock.release()
 
 
 @app.route("/")
@@ -129,8 +184,15 @@ def get_info():
     if not url:
         return jsonify({"error": "No URL provided"}), 400
 
+    cached = info_cache.get(url)
+    now = time.time()
+    if cached and now - cached["timestamp"] < INFO_CACHE_TTL:
+        return jsonify(cached["data"])
+
+    platform = get_platform(url)
     cmd = build_yt_dlp_cmd(url, "-j", url)
     try:
+        wait_for_platform_cooldown(platform)
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
             return jsonify({"error": result.stderr.strip() or "yt-dlp failed"}), 400
@@ -155,13 +217,16 @@ def get_info():
             })
         formats.sort(key=lambda x: x["height"], reverse=True)
 
-        return jsonify({
+        response_data = {
             "title": info.get("title", ""),
             "thumbnail": info.get("thumbnail", ""),
             "duration": info.get("duration"),
             "uploader": info.get("uploader", ""),
             "formats": formats,
-        })
+        }
+        info_cache[url] = {"timestamp": now, "data": response_data}
+
+        return jsonify(response_data)
     except subprocess.TimeoutExpired:
         return jsonify({"error": "Timed out fetching video info"}), 400
     except Exception as e:
