@@ -82,6 +82,18 @@ def build_yt_dlp_cmd(url, *extra_args):
         "--user-agent",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
     ]
+
+    platform = get_platform(url)
+    if platform == "youtube":
+        # Use Android + mweb clients to bypass PO token requirement and
+        # datacenter IP blocking that affects cloud hosts like Render.
+        # The Android client uses a different API endpoint that is less
+        # aggressively bot-filtered than the web client.
+        cmd += [
+            "--extractor-args",
+            "youtube:player_client=android,mweb;player_skip=webpage,configs",
+        ]
+
     cookies_file = get_cookies_file(url)
     if cookies_file:
         cmd += ["--cookies", cookies_file]
