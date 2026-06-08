@@ -84,17 +84,26 @@ def build_yt_dlp_cmd(url, *extra_args):
     ]
 
     platform = get_platform(url)
-    if platform == "youtube":
-        # Use mweb + tv_embedded + web_embedded clients — these all support
-        # cookie-based auth (android does NOT support cookies and gets skipped).
-        # tv_embedded and mweb bypass PO token requirements on datacenter IPs
-        # like Render/AWS where the standard web client is blocked.
-        cmd += [
-            "--extractor-args",
-            "youtube:player_client=mweb,tv_embedded,web_embedded;player_skip=webpage,configs",
-        ]
-
     cookies_file = get_cookies_file(url)
+
+    if platform == "youtube":
+        if cookies_file:
+            # With cookies: use the standard web client with full webpage access.
+            # yt-dlp needs to load the page to extract the PO (Proof of Origin)
+            # token from the authenticated session — skipping it causes the
+            # "Sign in to confirm you're not a bot" error on cloud/datacenter IPs.
+            cmd += [
+                "--extractor-args",
+                "youtube:player_client=web,mweb,web_embedded",
+            ]
+        else:
+            # Without cookies: use mobile clients that don’t require PO tokens
+            # and skip the webpage to avoid being rate-limited.
+            cmd += [
+                "--extractor-args",
+                "youtube:player_client=mweb,web_embedded;player_skip=webpage,configs",
+            ]
+
     if cookies_file:
         cmd += ["--cookies", cookies_file]
     cmd += list(extra_args)
