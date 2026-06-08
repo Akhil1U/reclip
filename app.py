@@ -105,8 +105,9 @@ def wait_for_platform_cooldown(platform):
         platform_last_request[platform] = now
 
 
-def run_yt_dlp_with_retries(cmd, timeout, platform):
-    max_attempts = 3 if platform == "youtube" else 1
+def run_yt_dlp_with_retries(cmd, timeout, platform, max_attempts=None):
+    if max_attempts is None:
+        max_attempts = 3 if platform == "youtube" else 1
     last_result = None
 
     for attempt in range(max_attempts):
@@ -234,11 +235,18 @@ def get_info():
     cmd = build_yt_dlp_cmd(url, "-j", url)
     try:
         wait_for_platform_cooldown(platform)
-        result = run_yt_dlp_with_retries(cmd, timeout=60, platform=platform)
+        result = run_yt_dlp_with_retries(cmd, timeout=35, platform=platform, max_attempts=1)
         if result.returncode != 0:
             return jsonify({"error": result.stderr.strip() or "yt-dlp failed"}), 400
 
-        info = json.loads(result.stdout)
+        stdout = (result.stdout or "").strip()
+        if not stdout:
+            return jsonify({"error": "yt-dlp returned no metadata"}), 400
+
+        try:
+            info = json.loads(stdout)
+        except json.JSONDecodeError:
+            return jsonify({"error": "yt-dlp returned invalid metadata"}), 400
 
         # Build quality options — keep best format per resolution
         best_by_height = {}

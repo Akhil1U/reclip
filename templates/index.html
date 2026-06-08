@@ -434,6 +434,18 @@
       return d.innerHTML;
     }
 
+    async function readJsonOrError(res) {
+      const text = await res.text();
+      try {
+        return JSON.parse(text);
+      } catch {
+        if (!res.ok) {
+          return { error: `Server error (${res.status})` };
+        }
+        return { error: 'Server returned an invalid response' };
+      }
+    }
+
     function friendlyError(err) {
       if (err.includes('Unsupported URL')) return 'This URL is not supported';
       if (err.includes('Video unavailable')) return 'Video is unavailable or private';
@@ -474,7 +486,7 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ url }),
           });
-          const data = await res.json();
+          const data = await readJsonOrError(res);
           if (data.error) {
             cardData[idx] = { ...cardData[idx], status: 'info-error', error: data.error };
           } else {
@@ -620,7 +632,7 @@
             title: c.title || '',
           }),
         });
-        const data = await res.json();
+        const data = await readJsonOrError(res);
         if (data.error) {
           c.status = 'error';
           c.error = data.error;
@@ -641,7 +653,7 @@
       const iv = setInterval(async () => {
         try {
           const res = await fetch(`/api/status/${c.jobId}`);
-          const data = await res.json();
+          const data = await readJsonOrError(res);
           if (data.status === 'done') {
             clearInterval(iv);
             c.status = 'done';
