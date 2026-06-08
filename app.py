@@ -4,20 +4,64 @@ import glob
 import json
 import subprocess
 import threading
+from urllib.parse import urlparse
 from flask import Flask, request, jsonify, send_file, render_template
 
 app = Flask(__name__)
-DOWNLOAD_DIR = os.path.join(os.path.dirname(__file__), "downloads")
+BASE_DIR = os.path.dirname(__file__)
+DOWNLOAD_DIR = os.path.join(BASE_DIR, "downloads")
+COOKIES_DIR = os.path.join(BASE_DIR, "cookies")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+os.makedirs(COOKIES_DIR, exist_ok=True)
 
 jobs = {}
+
+
+def get_cookies_file(url):
+    env_cookies_file = os.environ.get("YTDLP_COOKIES_FILE")
+    if env_cookies_file and os.path.exists(env_cookies_file):
+        return env_cookies_file
+
+    hostname = (urlparse(url).hostname or "").lower()
+    if hostname.startswith("www."):
+        hostname = hostname[4:]
+
+    platform_candidates = []
+    if "youtube.com" in hostname or "youtu.be" in hostname:
+        platform_candidates = ["youtube.txt", "www.youtube.com_cookies.txt", "cookies.txt"]
+    elif "instagram.com" in hostname:
+        platform_candidates = ["instagram.txt", "www.instagram.com_cookies.txt", "cookies.txt"]
+    elif "facebook.com" in hostname or "fb.watch" in hostname:
+        platform_candidates = ["facebook.txt", "www.facebook.com_cookies.txt", "cookies.txt"]
+    else:
+        platform_candidates = ["cookies.txt"]
+
+    for filename in platform_candidates:
+        candidate = os.path.join(COOKIES_DIR, filename)
+        if os.path.exists(candidate):
+            return candidate
+
+    legacy_root_cookie = os.path.join(BASE_DIR, "cookies.txt")
+    if os.path.exists(legacy_root_cookie):
+        return legacy_root_cookie
+
+    return None
+
+
+def build_yt_dlp_cmd(url, *extra_args):
+    cmd = ["yt-dlp", "--no-playlist", "--extractor-args", "youtube:player_client=ios"]
+    cookies_file = get_cookies_file(url)
+    if cookies_file:
+        cmd += ["--cookies", cookies_file]
+    cmd += list(extra_args)
+    return cmd
 
 
 def run_download(job_id, url, format_choice, format_id):
     job = jobs[job_id]
     out_template = os.path.join(DOWNLOAD_DIR, f"{job_id}.%(ext)s")
 
-    cmd = ["yt-dlp", "--no-playlist", "--extractor-args", "youtube:player_client=ios", "-o", out_template]
+    cmd = build_yt_dlp_cmd(url, "-o", out_template)
 
     if format_choice == "audio":
         cmd += ["-x", "--audio-format", "mp3"]
@@ -32,7 +76,7 @@ def run_download(job_id, url, format_choice, format_id):
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if result.returncode != 0:
             job["status"] = "error"
-            job["error"] = result.stderr.strip().split("\n")[-1]
+            job["error"] = result.stderr.strip() or "yt-dlp failed"
             return
 
         files = glob.glob(os.path.join(DOWNLOAD_DIR, f"{job_id}.*"))
@@ -85,11 +129,11 @@ def get_info():
     if not url:
         return jsonify({"error": "No URL provided"}), 400
 
-    cmd = ["yt-dlp", "--no-playlist", "--extractor-args", "youtube:player_client=ios", "-j", url]
+    cmd = build_yt_dlp_cmd(url, "-j", url)
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
-            return jsonify({"error": result.stderr.strip().split("\n")[-1]}), 400
+            return jsonify({"error": result.stderr.strip() or "yt-dlp failed"}), 400
 
         info = json.loads(result.stdout)
 
