@@ -193,6 +193,10 @@ def run_download(job_id, url, format_choice, format_id):
         wait_for_platform_cooldown(platform)
 
         result = run_yt_dlp_with_retries(cmd, timeout=300, platform=platform)
+        if result is None:
+            job["status"] = "error"
+            job["error"] = "yt-dlp failed"
+            return
         if result.returncode != 0:
             job["status"] = "error"
             job["error"] = result.stderr.strip() or "yt-dlp failed"
@@ -261,6 +265,8 @@ def get_info():
     try:
         wait_for_platform_cooldown(platform)
         result = run_yt_dlp_with_retries(cmd, timeout=35, platform=platform, max_attempts=1)
+        if result is None:
+            return jsonify({"error": "yt-dlp failed"}), 400
         if result.returncode != 0:
             return jsonify({"error": result.stderr.strip() or "yt-dlp failed"}), 400
 
