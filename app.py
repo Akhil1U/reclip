@@ -5,6 +5,7 @@ import json
 import subprocess
 import threading
 import time
+import urllib.request
 from urllib.parse import urlparse
 from flask import Flask, request, jsonify, send_file, render_template
 
@@ -352,6 +353,24 @@ def download_file(job_id):
     if not job or job["status"] != "done":
         return jsonify({"error": "File not ready"}), 404
     return send_file(job["file"], as_attachment=True, download_name=job["filename"])
+
+
+# Keep-alive ping (Render free tier spins down after 15 min of inactivity).
+# Pings this app's public URL every 14 minutes. Only runs on Render.
+def _keep_alive():
+    self_url = os.environ.get("RENDER_EXTERNAL_URL")
+    if not self_url:
+        return
+    while True:
+        time.sleep(840)  # 14 minutes
+        try:
+            urllib.request.urlopen(f"{self_url.rstrip('/')}/", timeout=10).close()
+        except Exception:
+            pass
+
+
+if os.environ.get("RENDER"):
+    threading.Thread(target=_keep_alive, daemon=True).start()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
